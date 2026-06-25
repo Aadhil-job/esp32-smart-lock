@@ -1,2 +1,2 @@
-**ESP32 Smart Lock **
+**ESP32 Smart Lock**
 — A WiFi-controlled physical lock built on ESP32, running as its own standalone access point and web server (no internet or router required). Users connect to the ESP32's network, submit a password through a styled web page, and a servo physically unlocks a latch mechanism on success. Includes attempt-limiting with timed lockout/cooldown, live OLED status display, and LED feedback. Built to learn ESP32 softAP/WebServer fundamentals, HTTP request handling, and basic embedded security tradeoffs (documented limitations include plaintext HTTP and WiFi-range as the attack surface, by design for this learning project)
