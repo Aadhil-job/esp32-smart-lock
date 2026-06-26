@@ -11,6 +11,9 @@ const int greenLED = 4;
 const int redLED = 5;
 int attemptCount = 0;
 unsigned long lockoutStart = 0;
+int previousStationCount = 0;
+unsigned long previousTimerUpdate;
+
 
 void setup() {
   Serial.begin(115200);
@@ -24,6 +27,8 @@ void setup() {
   pinMode(greenLED,OUTPUT);
   pinMode(redLED,OUTPUT);
 }
+
+
 void login(){
   int remainingSeconds;
   String page;
@@ -33,18 +38,25 @@ void login(){
     }
     else{
     remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
-    page = buildPage("", remainingSeconds);
+    page = buildPage("", remainingSeconds,false);
     server.send(200,"text/html",page);
     return;
     }
   }
   if(server.arg("password") == "12345678"){
-    server.send(200, "text/plain", "Success");
+    page = buildPage("",0,true);
+    server.send(200, "text/html",page);
     myServo.write(110);
-    u8g2.clearBuffer(); 
-    u8g2.drawStr(40,20,"Open!");
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB14_tr);
+    u8g2.drawStr(15, 30, "Unlocked!");
+    u8g2.drawHLine(0, 38, 128);
+    u8g2.setFont(u8g2_font_ncenB08_tr);
+    u8g2.drawStr(20, 54, "Welcome back");
+    u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
+    u8g2.drawGlyph(5, 32, 0x42);
     u8g2.sendBuffer();
-    digitalWrite(greenLED,HIGH);  
+    digitalWrite(greenLED,HIGH); 
     digitalWrite(redLED,LOW);
   }
   else{
@@ -55,32 +67,43 @@ void login(){
     String page;
     int remainingAttempts = 5 - attemptCount;
     String message = "Incorrect Password, " + String(remainingAttempts) + " attempts remaining";
-    page = buildPage(message,0);
+    page = buildPage(message,0,false);
     server.send(200, "text/html", page);
     myServo.write(0);
-    u8g2.clearBuffer(); 
-    u8g2.drawStr(10,20,"Wrong passcode");
+    int remaining = 5 - attemptCount;
+    String attemptsMsg = String(remaining) + " attempts remaining";
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB10_tr);
+    u8g2.drawStr(5, 16, "Wrong passcode");
+    u8g2.drawHLine(0, 22, 128);
+    u8g2.setFont(u8g2_font_ncenB08_tr);
+    u8g2.drawStr(15, 40, attemptsMsg.c_str());
+    u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
+    u8g2.drawGlyph(5, 18, 0x46);
     u8g2.sendBuffer();
     digitalWrite(redLED,HIGH); 
     digitalWrite(greenLED,LOW);  
   }
 }
+
+
 void form(){
   int remainingSeconds;
   String page;
   if(attemptCount >= 5){
     remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
-    page = buildPage("", remainingSeconds);
+    page = buildPage("", remainingSeconds,false);
     server.send(200,"text/html",page);
     return;
   }
   else{
-    page = buildPage("", 0);
+    page = buildPage("", 0,false);
     server.send(200,"text/html",page);
   }
 }
 
-String buildPage(String message, int remainingSeconds) {
+
+String buildPage(String message, int remainingSeconds,bool unlocked) {
   String page = R"rawliteral(
   <!DOCTYPE html>
 <html lang="en">
@@ -199,9 +222,9 @@ String buildPage(String message, int remainingSeconds) {
   <div class="page">
     <div class="card" id="card">
 
-      <div class="icon-circle">&#128274;</div>
-      <h1>Smart Lock</h1>
-      <p class="subtitle">Enter passcode to unlock</p>
+      <div class="icon-circle">ICON_PLACEHOLDER</div>
+      <h1>HEADING_PLACEHOLDER</h1>
+      <p class="subtitle">SUBTITLE_PLACEHOLDER</p>
 
       <form action="/login" method="POST" id="loginForm">
         <label for="pwd">Password</label>
@@ -244,13 +267,79 @@ String buildPage(String message, int remainingSeconds) {
 </body>
 </html>
   )rawliteral";
-
+  if(unlocked){
+    page.replace("ICON_PLACEHOLDER","&#128275;");
+    page.replace("HEADING_PLACEHOLDER","SUCCESS!");
+    page.replace("SUBTITLE_PLACEHOLDER","Door is open now");
+  }
+  else{
+    page.replace("ICON_PLACEHOLDER","&#128274;");
+    page.replace("HEADING_PLACEHOLDER","Smart Lock");
+    page.replace("SUBTITLE_PLACEHOLDER","Enter password to unlock");
+  }
   page.replace("MESSAGE_PLACEHOLDER", message);
   page.replace("REMAINING_SECONDS_PLACEHOLDER", String(remainingSeconds));
 
   return page;
 }
 
+
+void drawIdleScreen() {
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_ncenB10_tr);
+  u8g2.drawStr(20, 14, "Smart Lock");
+  u8g2.drawHLine(0, 20, 128);
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+  u8g2.drawStr(0, 38, "WiFi: ESP32");
+  u8g2.drawStr(0, 54, "Pass: 12345678");
+  u8g2.sendBuffer();
+}
+
+
+void drawConnectedScreen() {
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_ncenB10_tr);
+  u8g2.drawStr(15, 14, "Connected");
+  u8g2.drawHLine(0, 20, 128);
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+  u8g2.drawStr(0, 38, "Go to:");
+  u8g2.drawStr(0, 54, "192.168.4.1");
+  u8g2.sendBuffer();
+}
+
+
 void loop(){
+  int currentStationCount = WiFi.softAPgetStationNum();
+  if (currentStationCount != previousStationCount) {
+    previousStationCount = currentStationCount;
+    if(currentStationCount == 0){
+      drawIdleScreen();
+    }
+    else{
+      drawConnectedScreen();
+    }
+  }
+  if(attemptCount >= 5){
+    if(millis() - previousTimerUpdate >= 1000){
+      String remainingTime;
+      previousTimerUpdate = millis();
+      int remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
+      int minutes = (remainingSeconds)/60;
+      int seconds = (remainingSeconds)%60;
+      remainingTime = "Try again in : " + String(minutes) + " min " + (seconds < 10 ? "0" : "") + "s";
+      u8g2.clearBuffer();
+      u8g2.setFont(u8g2_font_ncenB10_tr);
+      u8g2.drawStr(25, 14, "Locked Out");
+      u8g2.drawHLine(0, 20, 128);
+      u8g2.setFont(u8g2_font_ncenB08_tr);
+      u8g2.drawStr(0, 38, "Try again in:");
+
+      String countdown = String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
+      u8g2.setFont(u8g2_font_ncenB14_tr);
+      u8g2.drawStr(35, 58, countdown.c_str());
+
+      u8g2.sendBuffer();
+    }
+  }
   server.handleClient();
 }
