@@ -7,25 +7,25 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 WebServer server(80);
 Servo myServo;
 
-const int greenLED = 4;
-const int redLED = 5;
 int attemptCount = 0;
 unsigned long lockoutStart = 0;
 int previousStationCount = 0;
 unsigned long previousTimerUpdate;
 
+void drawIdleScreen();
 
 void setup() {
   Serial.begin(115200);
   myServo.attach(13);
   myServo.write(0);
   WiFi.softAP("ESP32","12345678");
+  server.begin();
   server.on("/",form);
   server.on("/login",login);
   u8g2.begin();
   u8g2.setFont(u8g2_font_ncenB08_tr);
-  pinMode(greenLED,OUTPUT);
-  pinMode(redLED,OUTPUT);
+  drawIdleScreen();
+  Serial.println(WiFi.softAPIP());
 }
 
 
@@ -46,7 +46,10 @@ void login(){
   if(server.arg("password") == "12345678"){
     page = buildPage("",0,true);
     server.send(200, "text/html",page);
-    myServo.write(110);
+    for(int i=0;i<=80;i++){
+      myServo.write(i);
+      delay(15);
+    };
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB14_tr);
     u8g2.drawStr(15, 30, "Unlocked!");
@@ -56,8 +59,6 @@ void login(){
     u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
     u8g2.drawGlyph(5, 32, 0x42);
     u8g2.sendBuffer();
-    digitalWrite(greenLED,HIGH); 
-    digitalWrite(redLED,LOW);
   }
   else{
     attemptCount++ ;
@@ -81,8 +82,6 @@ void login(){
     u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
     u8g2.drawGlyph(5, 18, 0x46);
     u8g2.sendBuffer();
-    digitalWrite(redLED,HIGH); 
-    digitalWrite(greenLED,LOW);  
   }
 }
 
@@ -308,25 +307,31 @@ void drawConnectedScreen() {
 }
 
 
+void updateIdleOrConnectedScreen(int stationCount) {
+  if (stationCount == 0) {
+    drawIdleScreen();
+  } else {
+    drawConnectedScreen();
+  }
+}
+
+
 void loop(){
   int currentStationCount = WiFi.softAPgetStationNum();
   if (currentStationCount != previousStationCount) {
     previousStationCount = currentStationCount;
-    if(currentStationCount == 0){
-      drawIdleScreen();
-    }
-    else{
-      drawConnectedScreen();
-    }
+    updateIdleOrConnectedScreen(currentStationCount);
   }
   if(attemptCount >= 5){
+    if((millis() - lockoutStart) > 600000 ){
+      attemptCount = 0;
+      updateIdleOrConnectedScreen(currentStationCount);
+    }
     if(millis() - previousTimerUpdate >= 1000){
-      String remainingTime;
       previousTimerUpdate = millis();
       int remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
       int minutes = (remainingSeconds)/60;
       int seconds = (remainingSeconds)%60;
-      remainingTime = "Try again in : " + String(minutes) + " min " + (seconds < 10 ? "0" : "") + "s";
       u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_ncenB10_tr);
       u8g2.drawStr(25, 14, "Locked Out");
