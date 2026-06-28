@@ -11,6 +11,8 @@ int attemptCount = 0;
 unsigned long lockoutStart = 0;
 int previousStationCount = 0;
 unsigned long previousTimerUpdate;
+unsigned long unlockTime;
+bool isUnlocked;
 
 void drawIdleScreen();
 
@@ -44,6 +46,8 @@ void login(){
     }
   }
   if(server.arg("password") == "12345678"){
+    unlockTime = millis();
+    isUnlocked = true;
     page = buildPage("",0,true);
     server.send(200, "text/html",page);
     for(int i=0;i<=80;i++){
@@ -52,12 +56,10 @@ void login(){
     };
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB14_tr);
-    u8g2.drawStr(15, 30, "Unlocked!");
-    u8g2.drawHLine(0, 38, 128);
+    u8g2.drawStr(16, 30, "Unlocked!");
+    u8g2.drawHLine(0, 38, 124);
     u8g2.setFont(u8g2_font_ncenB08_tr);
-    u8g2.drawStr(20, 54, "Welcome back");
-    u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
-    u8g2.drawGlyph(5, 32, 0x42);
+    u8g2.drawStr(16, 54, "Welcome back");
     u8g2.sendBuffer();
   }
   else{
@@ -76,9 +78,9 @@ void login(){
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB10_tr);
     u8g2.drawStr(5, 16, "Wrong passcode");
-    u8g2.drawHLine(0, 22, 128);
+    u8g2.drawHLine(0, 22, 124);
     u8g2.setFont(u8g2_font_ncenB08_tr);
-    u8g2.drawStr(15, 40, attemptsMsg.c_str());
+    u8g2.drawStr(8, 40, attemptsMsg.c_str());
     u8g2.setFont(u8g2_font_open_iconic_check_2x_t);
     u8g2.drawGlyph(5, 18, 0x46);
     u8g2.sendBuffer();
@@ -287,7 +289,7 @@ void drawIdleScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB10_tr);
   u8g2.drawStr(20, 14, "Smart Lock");
-  u8g2.drawHLine(0, 20, 128);
+  u8g2.drawHLine(0, 20, 124);
   u8g2.setFont(u8g2_font_ncenB08_tr);
   u8g2.drawStr(0, 38, "WiFi: ESP32");
   u8g2.drawStr(0, 54, "Pass: 12345678");
@@ -299,7 +301,7 @@ void drawConnectedScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB10_tr);
   u8g2.drawStr(15, 14, "Connected");
-  u8g2.drawHLine(0, 20, 128);
+  u8g2.drawHLine(0, 20, 124);
   u8g2.setFont(u8g2_font_ncenB08_tr);
   u8g2.drawStr(0, 38, "Go to:");
   u8g2.drawStr(0, 54, "192.168.4.1");
@@ -335,9 +337,9 @@ void loop(){
       u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_ncenB10_tr);
       u8g2.drawStr(25, 14, "Locked Out");
-      u8g2.drawHLine(0, 20, 128);
+      u8g2.drawHLine(0, 20, 124);
       u8g2.setFont(u8g2_font_ncenB08_tr);
-      u8g2.drawStr(0, 38, "Try again in:");
+      u8g2.drawStr(25, 38, "Try again in:");
 
       String countdown = String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
       u8g2.setFont(u8g2_font_ncenB14_tr);
@@ -346,5 +348,29 @@ void loop(){
       u8g2.sendBuffer();
     }
   }
+  if(isUnlocked && millis() - unlockTime >= 60000) {
+    isUnlocked = false;
+    for(int i=80;i>=0;i--){
+      myServo.write(i);
+      delay(15);
+    }
+  }
+if (isUnlocked) {
+  if (millis() - previousTimerUpdate >= 1000) {
+    previousTimerUpdate = millis();
+    int secondsLeft = (60000 - (millis() - unlockTime)) / 1000;
+
+    if (secondsLeft > 0) {
+      u8g2.clearBuffer();
+      u8g2.setFont(u8g2_font_ncenB10_tr);
+      u8g2.drawStr(15, 14, "Unlocked!");
+      u8g2.drawHLine(0, 20, 124);
+      u8g2.setFont(u8g2_font_ncenB08_tr);
+      u8g2.drawStr(24, 38, "Closing in:");
+      u8g2.drawStr(44, 54, (String(secondsLeft) + "s").c_str());
+      u8g2.sendBuffer();
+    }
+  }
+}
   server.handleClient();
 }
