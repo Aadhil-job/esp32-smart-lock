@@ -354,6 +354,7 @@ void loop(){
       myServo.write(i);
       delay(15);
     }
+    updateIdleOrConnectedScreen(currentStationCount);
   }
 if (isUnlocked) {
   if (millis() - previousTimerUpdate >= 1000) {
@@ -363,7 +364,7 @@ if (isUnlocked) {
     if (secondsLeft > 0) {
       u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_ncenB10_tr);
-      u8g2.drawStr(15, 14, "Unlocked!");
+      u8g2.drawStr(20, 14, "Unlocked!");
       u8g2.drawHLine(0, 20, 124);
       u8g2.setFont(u8g2_font_ncenB08_tr);
       u8g2.drawStr(24, 38, "Closing in:");
