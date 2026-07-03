@@ -8,6 +8,7 @@ Built as project 3 of my self-driven ESP32 learning series, entering second year
 
 ## Demo
 
+[![Watch the Demo on LinkedIn](https://img.shields.io/badge/LinkedIn-Watch%20Demo%20Video-0077B5?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/posts/aadhiljob_ece-esp32-embeddedsystems-ugcPost-7478802511001329665-AMNc/?utm_source=share&utm_medium=member_desktop&rcm=ACoAAER9AjcB82l--O1bjB3Wrr4lOcxL_smk22A)
 
 ---
 
