@@ -8,7 +8,9 @@ Built as project 3 of my self-driven ESP32 learning series, entering second year
 
 ## Demo
 
-> Photos and video coming after physical build is complete.
+## Demo
+
+[![Watch the demo](https://img.shields.io/badge/LinkedIn-Watch%20Demo-blue?logo=linkedin)](YOUR_LINKEDIN_POST_URL)
 
 ---
 
