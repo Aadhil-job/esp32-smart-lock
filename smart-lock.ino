@@ -1,59 +1,103 @@
+// ============================================================
+// ESP32 Smart Lock
+// Runs as a standalone WiFi AP + HTTP server.
+// Phone connects to the ESP32's network, submits a password
+// via a styled webpage, servo physically unlocks a latch.
+// Includes lockout/cooldown, auto-relock, and OLED status.
+// ============================================================
+
 #include <WebServer.h>
 #include <ESP32Servo.h>
 #include <U8g2lib.h>
-#include<WiFi.h>
+#include <WiFi.h>
 
-U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
-WebServer server(80);
-Servo myServo;
+// --- Hardware objects ---
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE); // OLED via hardware I2C (SDA=21, SCL=22)
+WebServer server(80);  // HTTP server on standard port 80
+Servo myServo;         // Servo object — uses ESP32Servo library for hardware PWM
 
-int attemptCount = 0;
-unsigned long lockoutStart = 0;
-int previousStationCount = 0;
-unsigned long previousTimerUpdate;
-unsigned long unlockTime;
-bool isUnlocked;
+// --- Security state ---
+int attemptCount = 0;           // tracks consecutive wrong password attempts
+unsigned long lockoutStart = 0; // millis() timestamp of when lockout was triggered
 
+// --- OLED state management ---
+int previousStationCount = 0;       // last known number of connected devices, for change detection
+unsigned long previousTimerUpdate;  // last time OLED timer was redrawn (once-per-second throttle)
+
+// --- Auto-relock state ---
+unsigned long unlockTime; // millis() timestamp of when door was last unlocked
+bool isUnlocked;          // true while door is open, false once servo has closed
+
+// Forward declaration — drawIdleScreen() is called in setup() but defined later
 void drawIdleScreen();
 
+// ============================================================
+// SETUP
+// ============================================================
 void setup() {
   Serial.begin(115200);
+
+  // Servo — attach to GPIO 13, start at closed position (0°)
   myServo.attach(13);
   myServo.write(0);
-  WiFi.softAP("ESP32","12345678");
+
+  // Start WiFi access point — ESP32 broadcasts its own network
+  // WiFi password (for joining the network) and lock password (typed into the webpage) are separate
+  WiFi.softAP("ESP32", "12345678");
+
+  // Start HTTP server and register route handlers
+  // server.on() stores the function reference — the server calls it automatically when that path is requested
   server.begin();
-  server.on("/",form);
-  server.on("/login",login);
+  server.on("/", form);       // GET / → serve the login page
+  server.on("/login", login); // POST /login → handle password submission
+
+  // OLED init
   u8g2.begin();
   u8g2.setFont(u8g2_font_ncenB08_tr);
-  drawIdleScreen();
-  Serial.println(WiFi.softAPIP());
+  drawIdleScreen(); // show WiFi credentials immediately — before anyone connects
+
+  Serial.println(WiFi.softAPIP()); // print actual AP IP for debugging (should be 192.168.4.1)
 }
 
-
-void login(){
+// ============================================================
+// LOGIN HANDLER — called automatically when browser POSTs to /login
+// ============================================================
+void login() {
   int remainingSeconds;
   String page;
-  if(attemptCount >= 5){
-    if(millis()-lockoutStart >= 600000){
+
+  // --- Lockout check (runs before password check) ---
+  if (attemptCount >= 5) {
+    if (millis() - lockoutStart >= 600000) {
+      // 10 minutes have passed — reset lockout, let this attempt through
       attemptCount = 0;
-    }
-    else{
-    remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
-    page = buildPage("", remainingSeconds,false);
-    server.send(200,"text/html",page);
-    return;
+    } else {
+      // Still locked out — calculate remaining cooldown and send lockout page
+      remainingSeconds = (600000 - (millis() - lockoutStart)) / 1000;
+      page = buildPage("", remainingSeconds, false);
+      server.send(200, "text/html", page);
+      return; // stop here — don't process the password
     }
   }
-  if(server.arg("password") == "12345678"){
+
+  // --- Password check ---
+  if (server.arg("password") == "12345678") {
+    // Correct password — start auto-relock timer and flag door as open
     unlockTime = millis();
     isUnlocked = true;
-    page = buildPage("",0,true);
-    server.send(200, "text/html",page);
-    for(int i=0;i<=80;i++){
+
+    // Send success page to browser
+    page = buildPage("", 0, true);
+    server.send(200, "text/html", page);
+
+    // Sweep servo open gradually — stepped movement for visual effect
+    // delay() is acceptable here since this only blocks for ~1.2s on a confirmed successful unlock
+    for (int i = 0; i <= 80; i++) {
       myServo.write(i);
       delay(15);
-    };
+    }
+
+    // OLED: show unlock confirmation
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB14_tr);
     u8g2.drawStr(16, 30, "Unlocked!");
@@ -61,18 +105,28 @@ void login(){
     u8g2.setFont(u8g2_font_ncenB08_tr);
     u8g2.drawStr(16, 54, "Welcome back");
     u8g2.sendBuffer();
-  }
-  else{
-    attemptCount++ ;
-    if(attemptCount == 5){
-    lockoutStart = millis();
+
+  } else {
+    // Wrong password — increment attempt counter
+    attemptCount++;
+
+    // If this increment just hit 5, capture the lockout start timestamp
+    // This only runs once (when count first reaches 5), not on every locked-out call
+    if (attemptCount == 5) {
+      lockoutStart = millis();
     }
+
+    // Build error message with remaining attempts
     String page;
     int remainingAttempts = 5 - attemptCount;
     String message = "Incorrect Password, " + String(remainingAttempts) + " attempts remaining";
-    page = buildPage(message,0,false);
+    page = buildPage(message, 0, false);
     server.send(200, "text/html", page);
+
+    // Keep servo at locked position (0°)
     myServo.write(0);
+
+    // OLED: show wrong passcode + remaining attempts
     int remaining = 5 - attemptCount;
     String attemptsMsg = String(remaining) + " attempts remaining";
     u8g2.clearBuffer();
@@ -87,24 +141,32 @@ void login(){
   }
 }
 
-
-void form(){
+// ============================================================
+// FORM HANDLER — called automatically when browser GETs /
+// ============================================================
+void form() {
   int remainingSeconds;
   String page;
-  if(attemptCount >= 5){
-    remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
-    page = buildPage("", remainingSeconds,false);
-    server.send(200,"text/html",page);
+
+  // If currently locked out, calculate remaining seconds and send lockout page
+  // This prevents someone from bypassing lockout by refreshing the page
+  if (attemptCount >= 5) {
+    remainingSeconds = (600000 - (millis() - lockoutStart)) / 1000;
+    page = buildPage("", remainingSeconds, false);
+    server.send(200, "text/html", page);
     return;
-  }
-  else{
-    page = buildPage("", 0,false);
-    server.send(200,"text/html",page);
+  } else {
+    // Normal first visit — send clean login page, no message, no overlay
+    page = buildPage("", 0, false);
+    server.send(200, "text/html", page);
   }
 }
 
-
-String buildPage(String message, int remainingSeconds,bool unlocked) {
+// ============================================================
+// BUILD PAGE — returns the complete HTML page with placeholders replaced
+// Single template reused for all states (idle, wrong password, lockout, success)
+// ============================================================
+String buildPage(String message, int remainingSeconds, bool unlocked) {
   String page = R"rawliteral(
   <!DOCTYPE html>
 <html lang="en">
@@ -234,6 +296,7 @@ String buildPage(String message, int remainingSeconds,bool unlocked) {
         <button type="submit">Unlock</button>
       </form>
 
+      <!-- Lockout overlay: blurs the form and shows countdown timer -->
       <div class="lockout-overlay" id="lockoutOverlay">
         <div style="font-size:28px;">&#9201;</div>
         <p class="lockout-title">Locked out</p>
@@ -244,6 +307,8 @@ String buildPage(String message, int remainingSeconds,bool unlocked) {
   </div>
 
   <script>
+    // remainingSeconds is injected server-side by buildPage()
+    // If > 0, show the lockout overlay and start a client-side countdown
     var remainingSeconds = REMAINING_SECONDS_PLACEHOLDER;
 
     if (remainingSeconds > 0) {
@@ -268,23 +333,31 @@ String buildPage(String message, int remainingSeconds,bool unlocked) {
 </body>
 </html>
   )rawliteral";
-  if(unlocked){
-    page.replace("ICON_PLACEHOLDER","&#128275;");
-    page.replace("HEADING_PLACEHOLDER","SUCCESS!");
-    page.replace("SUBTITLE_PLACEHOLDER","Door is open now");
+
+  // Swap icon, heading and subtitle based on unlock state
+  if (unlocked) {
+    page.replace("ICON_PLACEHOLDER", "&#128275;");   // open lock emoji
+    page.replace("HEADING_PLACEHOLDER", "SUCCESS!");
+    page.replace("SUBTITLE_PLACEHOLDER", "Door is open now");
+  } else {
+    page.replace("ICON_PLACEHOLDER", "&#128274;");   // closed lock emoji
+    page.replace("HEADING_PLACEHOLDER", "Smart Lock");
+    page.replace("SUBTITLE_PLACEHOLDER", "Enter password to unlock");
   }
-  else{
-    page.replace("ICON_PLACEHOLDER","&#128274;");
-    page.replace("HEADING_PLACEHOLDER","Smart Lock");
-    page.replace("SUBTITLE_PLACEHOLDER","Enter password to unlock");
-  }
+
+  // Inject error message and lockout countdown value
   page.replace("MESSAGE_PLACEHOLDER", message);
   page.replace("REMAINING_SECONDS_PLACEHOLDER", String(remainingSeconds));
 
   return page;
 }
 
+// ============================================================
+// OLED SCREEN FUNCTIONS
+// ============================================================
 
+// Idle screen — shown at boot before anyone connects
+// Displays AP name and WiFi password so the user knows how to connect
 void drawIdleScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB10_tr);
@@ -296,7 +369,8 @@ void drawIdleScreen() {
   u8g2.sendBuffer();
 }
 
-
+// Connected screen — shown once a device joins the AP
+// Prompts the user to open a browser and navigate to the lock's IP
 void drawConnectedScreen() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB10_tr);
@@ -308,7 +382,8 @@ void drawConnectedScreen() {
   u8g2.sendBuffer();
 }
 
-
+// Helper — picks idle or connected screen based on current station count
+// Used both on connection state change and after lockout/relock resets the display
 void updateIdleOrConnectedScreen(int stationCount) {
   if (stationCount == 0) {
     drawIdleScreen();
@@ -317,61 +392,85 @@ void updateIdleOrConnectedScreen(int stationCount) {
   }
 }
 
+// ============================================================
+// LOOP
+// ============================================================
+void loop() {
 
-void loop(){
+  // --- Connection state change detection ---
+  // Only redraws OLED when the number of connected devices actually changes
+  // Avoids redrawing identical content every loop pass
   int currentStationCount = WiFi.softAPgetStationNum();
   if (currentStationCount != previousStationCount) {
     previousStationCount = currentStationCount;
     updateIdleOrConnectedScreen(currentStationCount);
   }
-  if(attemptCount >= 5){
-    if((millis() - lockoutStart) > 600000 ){
+
+  // --- Lockout state ---
+  if (attemptCount >= 5) {
+
+    // Independent cooldown check — resets lockout even without a login attempt
+    // Necessary because login() only runs when someone submits a form
+    if ((millis() - lockoutStart) > 600000) {
       attemptCount = 0;
       updateIdleOrConnectedScreen(currentStationCount);
     }
-    if(millis() - previousTimerUpdate >= 1000){
+
+    // OLED lockout countdown — redraws once per second to tick down the timer
+    if (millis() - previousTimerUpdate >= 1000) {
       previousTimerUpdate = millis();
-      int remainingSeconds = (600000 - ( millis()-lockoutStart ))/1000;
-      int minutes = (remainingSeconds)/60;
-      int seconds = (remainingSeconds)%60;
+      int remainingSeconds = (600000 - (millis() - lockoutStart)) / 1000;
+      int minutes = remainingSeconds / 60;
+      int seconds = remainingSeconds % 60;
+
       u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_ncenB10_tr);
       u8g2.drawStr(25, 14, "Locked Out");
       u8g2.drawHLine(0, 20, 124);
       u8g2.setFont(u8g2_font_ncenB08_tr);
       u8g2.drawStr(25, 38, "Try again in:");
-
       String countdown = String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
       u8g2.setFont(u8g2_font_ncenB14_tr);
       u8g2.drawStr(35, 58, countdown.c_str());
-
       u8g2.sendBuffer();
     }
   }
-  if(isUnlocked && millis() - unlockTime >= 60000) {
+
+  // --- Auto-relock ---
+  // Once 60 seconds have passed since unlock, sweep servo back to closed position
+  // isUnlocked flag prevents this from re-triggering after the first close
+  if (isUnlocked && millis() - unlockTime >= 60000) {
     isUnlocked = false;
-    for(int i=80;i>=0;i--){
+    for (int i = 80; i >= 0; i--) {
       myServo.write(i);
       delay(15);
     }
     updateIdleOrConnectedScreen(currentStationCount);
   }
-if (isUnlocked) {
-  if (millis() - previousTimerUpdate >= 1000) {
-    previousTimerUpdate = millis();
-    int secondsLeft = (60000 - (millis() - unlockTime)) / 1000;
 
-    if (secondsLeft > 0) {
-      u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_ncenB10_tr);
-      u8g2.drawStr(20, 14, "Unlocked!");
-      u8g2.drawHLine(0, 20, 124);
-      u8g2.setFont(u8g2_font_ncenB08_tr);
-      u8g2.drawStr(24, 38, "Closing in:");
-      u8g2.drawStr(44, 54, (String(secondsLeft) + "s").c_str());
-      u8g2.sendBuffer();
+  // --- Unlock countdown on OLED ---
+  // Shows "Closing in: Xs" while the door is open, updated once per second
+  // Stops drawing once secondsLeft hits 0 — auto-relock block above handles the actual close
+  if (isUnlocked) {
+    if (millis() - previousTimerUpdate >= 1000) {
+      previousTimerUpdate = millis();
+      int secondsLeft = (60000 - (millis() - unlockTime)) / 1000;
+
+      if (secondsLeft > 0) {
+        u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_ncenB10_tr);
+        u8g2.drawStr(20, 14, "Unlocked!");
+        u8g2.drawHLine(0, 20, 124);
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.drawStr(24, 38, "Closing in:");
+        u8g2.drawStr(44, 54, (String(secondsLeft) + "s").c_str());
+        u8g2.sendBuffer();
+      }
     }
   }
-}
+
+  // --- Process incoming HTTP requests ---
+  // Must be called every loop pass — non-blocking check for new requests
+  // Triggers form() or login() automatically based on the requested path
   server.handleClient();
 }
